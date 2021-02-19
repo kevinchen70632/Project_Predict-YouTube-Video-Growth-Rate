@@ -1,0 +1,205 @@
+---
+title: "Predicting the Growth Rate of YouTube Videos "
+date: "12/6/2020"
+output: html_document
+---
+
+```{r}
+library(mclust)
+library(MASS)
+library(caret) 
+library(ggplot2)
+library(car)
+library(corrplot)
+library(leaps)
+library(tidyverse)
+library(dplyr)
+library(stringr)
+
+```
+
+```{r}
+df <- read.csv("training.csv")
+pred <- read.csv("test.csv")
+```
+
+```{r}
+# drop id
+df =df[ , !(names(df) %in% 'id')]
+predf =pred[ , !(names(pred) %in% 'id')]
+
+# convert to numeric type
+df[2:258] <- lapply(df[2:258], as.numeric)
+predf[2:258] <- lapply(predf[2:258], as.numeric)
+
+# impute missing data by mean
+clean<-function(col){
+  if(is.factor(col)){col[is.na(col)]<-names(sort(-table(col)))[1]
+  return(col)}
+  
+  else if(is.numeric(col)){
+    col[is.na(col)]<-as.integer(round(mean(col,na.rm=T)))
+    return(col)
+  }
+}
+
+
+for(i in 1:ncol(df)){
+    df[[i]]<-clean(df[[i]])
+}
+
+for(i in 1:ncol(predf)){
+    predf[[i]]<-clean(predf[[i]])
+}
+```
+
+
+```{r}
+# convert date as hour of the day
+df[,1]=str_extract(df[, 1], "[:digit:]+:")
+df[,1]=str_remove(df[, 1], ":")
+df[,1]=as.numeric(df[,1])
+
+predf[,1]=str_extract(predf[, 1], "[:digit:]+:")
+predf[,1]=str_remove(predf[, 1], ":")
+predf[,1]=as.numeric(predf[,1])
+```
+
+
+```{r}
+head(df)
+```
+
+```{r}
+head(predf)
+```
+
+
+
+```{r}
+# feature selection, remove highly correlated predictors 
+library(mlbench)
+library(caret) 
+
+# remove the zero variance predictors
+zv <- apply(df, 2, function(x) length(unique(x)) == 1)
+
+dfr <- df[, !zv]
+
+n=length(colnames(dfr))
+
+correlationMatrix <- cor(dfr[,1:n],use="complete.obs")
+
+# find attributes that are highly correlated
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.8)
+# print indexes of highly correlated attributes
+print(highlyCorrelated)
+
+```
+
+
+```{r}
+dfnew <- dfr[ -highlyCorrelated ]
+dfnew
+```
+
+
+```{r}
+# feature selection using random forest's importance parameter
+# fit the entire data to the model
+set.seed(1)
+library(randomForest)
+feature = randomForest(growth_2_6~., data=dfnew, mtry = ncol(dfnew)-1,importance=TRUE)
+
+```
+
+
+```{r}
+# select the top features
+df3=dfnew[,importance(feature)[,1]>10]
+df3
+```
+
+
+
+
+
+```{r}
+# first model: bagging 
+bagging = randomForest(growth_2_6~., data=df3, mtry = ncol(df3)-1,importance=TRUE)
+```
+
+
+```{r}
+pred.bag=predict(bagging, predf)
+```
+
+```{r}
+pred$growth_2_6=pred.bag
+```
+
+
+```{r}
+prediction=pred[c('id','growth_2_6')]
+```
+
+```{r}
+write.csv(prediction,'predbagg.csv',row.names = FALSE)
+```
+
+
+
+
+
+```{r}
+# Second model: Random Forest
+trainIndex <- sample(nrow(df3), nrow(df3)*0.8)
+
+# Split the data 
+train <- df3[trainIndex,]
+test <- df3[-trainIndex,]
+```
+
+
+```{r}
+# Find the mtry parameter 
+
+library('Metrics')
+set.seed(1)
+error=rep(0,ncol(train)-1)
+for(mtry in 1:(ncol(train)-1)){
+  print(mtry)
+  rf.df = randomForest(growth_2_6~., data=train, mtry = mtry,importance=TRUE)
+  rf.pred = predict(rf.df, test)
+  error[mtry] = rmse(test$growth_2_6, rf.pred)
+}
+error
+```
+
+```{r}
+matplot(1:mtry,error,pch=19,type='b',ylab="RMSE")
+```
+
+```{r}
+rf = randomForest(growth_2_6~., data=df3, mtry = 19,importance=TRUE)
+```
+
+
+```{r}
+pred.rf=predict(rf, predf)
+```
+
+```{r}
+pred$growth_2_6=pred.rf
+```
+
+
+```{r}
+prediction=pred[c('id','growth_2_6')]
+```
+
+```{r}
+write.csv(prediction,'predrf.csv',row.names = FALSE)
+```
+
+
